@@ -4,6 +4,9 @@ from qdrant_client import QdrantClient
 from supabase import create_client
 from flask import Flask, request, jsonify, render_template_string
 
+from dotenv import load_dotenv
+load_dotenv()
+
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -43,13 +46,13 @@ def get_embedding(text: str) -> list:
 @app.route("/search", methods=["GET"])
 def search():
     query = request.args.get("q", "").strip()
+    excluded_brands = request.args.getlist("excluded_brands")  # e.g., ?excluded_brands=Nike&excluded_brands=Adidas
+
     if not query:
         return jsonify({"error": "Missing query parameter 'q'"}), 400
 
-    # Generate embedding for the query text
     query_vector = get_embedding(query)
 
-    # Search for similar vectors in Qdrant
     result = qdrant.query_points(
         collection_name=COLLECTION_NAME,
         query=query_vector,
@@ -58,21 +61,17 @@ def search():
     )
 
     hits = result.points
-
-    # Extract product IDs from search results
     product_ids = [hit.payload.get("product_id", hit.id) for hit in hits]
 
-
-    # Fetch full product details from Supabase
-    response = supabase.table("search_engine").select("*").in_("product_id", product_ids).execute()
-
-    # Order the results by relevance (optional)
-    # Supabase may return unordered results, so reorder by product_ids
-    print(response.data)
+    response = supabase.table(SUPABASE_TABLE).select("*").in_("product_id", product_ids).execute()
     id_to_product = {p["product_id"]: p for p in response.data}
     ordered_results = [id_to_product[pid] for pid in product_ids if pid in id_to_product]
 
+    if excluded_brands:
+        ordered_results = [p for p in ordered_results if p.get("brand") not in excluded_brands]
+
     return jsonify(ordered_results)
+
 
 
 @app.route("/")
@@ -97,17 +96,32 @@ def index():
 <div class="container">
     <h1 class="mb-4 text-center">Product Search</h1>
 
-    <form id="search-form" class="mb-4 d-flex justify-content-center" onsubmit="return false;">
-        <input
-            type="search"
-            id="query-input"
-            class="form-control me-2"
-            style="max-width: 500px;"
-            placeholder="Search products..."
-            aria-label="Search"
-        />
-        <button id="search-btn" class="btn btn-primary" type="submit">Search</button>
+    <form id="search-form" class="mb-4" onsubmit="return false;">
+        <div class="row justify-content-center g-2">
+            <div class="col-md-5">
+                <input
+                    type="search"
+                    id="query-input"
+                    class="form-control"
+                    placeholder="Search products..."
+                />
+            </div>
+            <div class="col-md-4">
+                <select id="excluded-brands" class="form-select" multiple>
+                    <option value="Nike">Nike</option>
+                    <option value="Adidas">Adidas</option>
+                    <option value="Under Armour">Under Armour</option>
+                    <option value="Sport-Tek">Sport-Tek</option>
+                    <!-- Add more known brands here -->
+                </select>
+                <small class="form-text text-muted">Hold Ctrl/⌘ to select multiple brands to exclude.</small>
+            </div>
+            <div class="col-md-2">
+                <button id="search-btn" class="btn btn-primary w-100">Search</button>
+            </div>
+        </div>
     </form>
+
 
     <div id="results" class="row g-4"></div>
 </div>
@@ -196,16 +210,23 @@ function createProductCard(product) {
 
 async function searchProducts() {
     const query = input.value.trim();
+    const brandSelect = document.getElementById("excluded-brands");
+    const excluded = Array.from(brandSelect.selectedOptions).map(opt => opt.value);
+
     if (!query) {
         alert("Please enter a search term.");
         return;
     }
+
     clearResults();
     searchBtn.disabled = true;
     searchBtn.textContent = "Searching...";
 
+    const params = new URLSearchParams({ q: query });
+    excluded.forEach(brand => params.append("excluded_brands", brand));
+
     try {
-        const response = await fetch(`/search?q=${encodeURIComponent(query)}`);
+        const response = await fetch(`/search?${params.toString()}`);
         if (!response.ok) throw new Error("Search failed");
 
         const data = await response.json();
@@ -226,6 +247,7 @@ async function searchProducts() {
         searchBtn.textContent = "Search";
     }
 }
+
 
 form.addEventListener("submit", searchProducts);
 </script>
