@@ -140,7 +140,6 @@ def fetch_product_data(product_id: str) -> dict | None:
         # Descriptions combined
         descriptions = [d.text.strip() for d in product.findall('def:description', namespaces) if d.text]
         combined_description = " ".join(descriptions)
-        print(combined_description)
 
 
         # Keywords
@@ -276,4 +275,3 @@ for pid in product_id_list:
     else:
         print(f"[!] Skipped {pid} — no data found or error")
 
-    time.sleep(0.5)  # avoid rate limits
